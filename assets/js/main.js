@@ -621,116 +621,232 @@
   }, true);
 })();
 
-/* ---------- Sounds of the quinta: water, birds and a little marimba, made live in the browser ---------- */
+/* ---------- Sounds of the quinta: birds, soft batuque, mbila, guitar and a low piano composing itself, made live in the browser ---------- */
 (function () {
   var btns = [].slice.call(document.querySelectorAll("[data-sound-toggle]"));
   if (!btns.length) return;
   var AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) { btns.forEach(function (b) { b.hidden = true; }); return; }
   var KEY = "qa-sound";
-  var ctx = null, master, verbIn, birdBus, marBus, nodes = [], timers = [], on = false;
+  var ctx = null, master, verbIn, buses = {}, timers = [], on = false, clock = null, startedAt = 0;
   function pref(v) { try { if (v === undefined) return localStorage.getItem(KEY); localStorage.setItem(KEY, v); } catch (e) { return null; } }
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function chance(p) { return Math.random() < p; }
   function later(fn, ms) { var id = setTimeout(function () { timers = timers.filter(function (x) { return x !== id; }); if (on) fn(); }, ms); timers.push(id); }
 
-  function noiseBuffer(sec, kind) {
+  function noise(sec, brown) {
     var len = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(2, len, ctx.sampleRate);
     for (var ch = 0; ch < 2; ch++) {
-      var d = buf.getChannelData(ch), b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
-      for (var i = 0; i < len; i++) {
-        var w = Math.random() * 2 - 1;
-        if (kind === "brown") { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
-        else { b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
-          b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
-          d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926; }
-      }
-      // soften the loop seam
+      var d = buf.getChannelData(ch), last = 0;
+      for (var i = 0; i < len; i++) { var w = Math.random() * 2 - 1; if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w; }
       var f = Math.floor(ctx.sampleRate * 0.05);
       for (var j = 0; j < f; j++) { var g = j / f; d[j] *= g; d[len - 1 - j] *= g; }
     }
     return buf;
   }
+  var whiteBuf;
   function impulse(sec) {
     var len = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (var ch = 0; ch < 2; ch++) { var d = buf.getChannelData(ch); for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+    for (var ch = 0; ch < 2; ch++) { var d = buf.getChannelData(ch); for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
     return buf;
   }
-  function loopNoise(kind, sec) { var s = ctx.createBufferSource(); s.buffer = noiseBuffer(sec, kind); s.loop = true; s.start(); nodes.push(s); return s; }
-  function lfo(freq, depth, target) { var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = freq; g.gain.value = depth; o.connect(g).connect(target); o.start(); nodes.push(o); }
+  function bus(level, send) {
+    var g = ctx.createGain(); g.gain.value = level; g.connect(master);
+    if (send) { var s = ctx.createGain(); s.gain.value = send; g.connect(s).connect(verbIn); }
+    return g;
+  }
 
   function build() {
     ctx = new AC();
     master = ctx.createGain(); master.gain.value = 0;
-    var comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3;
+    var comp = ctx.createDynamicsCompressor(); comp.threshold.value = -20; comp.ratio.value = 3; comp.attack.value = 0.01;
     master.connect(comp).connect(ctx.destination);
-    var verb = ctx.createConvolver(); verb.buffer = impulse(3.2);
-    verbIn = ctx.createGain(); verbIn.gain.value = 0.5; verbIn.connect(verb).connect(master);
+    var verb = ctx.createConvolver(); verb.buffer = impulse(3.6);
+    verbIn = ctx.createGain(); verbIn.gain.value = 0.55; verbIn.connect(verb).connect(master);
+    whiteBuf = noise(2, false);
 
-    // the waterfall: a soft low body, the bright "shhh" of falling water and a faint spray, slowly breathing
-    var deep = ctx.createBiquadFilter(); deep.type = "lowpass"; deep.frequency.value = 300;
-    var deepG = ctx.createGain(); deepG.gain.value = 0.09;
-    loopNoise("brown", 7).connect(deep).connect(deepG).connect(master);
-    var mid = ctx.createBiquadFilter(); mid.type = "bandpass"; mid.frequency.value = 1100; mid.Q.value = 0.35;
-    var midG = ctx.createGain(); midG.gain.value = 0.11;
-    loopNoise("pink", 9).connect(mid).connect(midG).connect(master);
-    lfo(0.05, 300, mid.frequency); lfo(0.031, 0.025, midG.gain);
-    var fall = ctx.createBiquadFilter(); fall.type = "highpass"; fall.frequency.value = 1600;
-    var fallLp = ctx.createBiquadFilter(); fallLp.type = "lowpass"; fallLp.frequency.value = 6500;
-    var fallG = ctx.createGain(); fallG.gain.value = 0.05;
-    loopNoise("pink", 6).connect(fall).connect(fallLp).connect(fallG).connect(master);
-    lfo(0.043, 0.012, fallG.gain);
-    var spray = ctx.createBiquadFilter(); spray.type = "highpass"; spray.frequency.value = 5000;
-    var sprayG = ctx.createGain(); sprayG.gain.value = 0.012;
-    loopNoise("pink", 5).connect(spray).connect(sprayG).connect(master);
-
-    birdBus = ctx.createGain(); birdBus.gain.value = 1; birdBus.connect(master);
-    var bSend = ctx.createGain(); bSend.gain.value = 0.35; birdBus.connect(bSend).connect(verbIn);
-    marBus = ctx.createGain(); marBus.gain.value = 1; marBus.connect(master);
-    var mSend = ctx.createGain(); mSend.gain.value = 0.9; marBus.connect(mSend).connect(verbIn);
+    buses.birds = bus(1, 0.3);
+    buses.drums = bus(1, 0.18);
+    buses.mbila = bus(1, 0.5);
+    buses.piano = bus(1, 0.7);
+    buses.guitar = bus(1, 0.35);
+    loadSignature();
   }
 
-  /* birds */
-  function voice(pan, vol) { var p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (p.pan) p.pan.value = pan; var g = ctx.createGain(); g.gain.value = vol; p.connect(g).connect(birdBus); return p; }
-  function chirp(out, t, f0, f1, dur, peak) {
+  /* ---- birds: several kinds, from different directions ---- */
+  function voice(pan, vol) { var p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (p.pan) p.pan.value = pan; var g = ctx.createGain(); g.gain.value = vol; p.connect(g).connect(buses.birds); return p; }
+  function chirp(out, t, f0, f1, dur, peak, type) {
     var o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = "sine";
-    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.55); o.frequency.exponentialRampToValueAtTime(f0 * 0.92, t + dur);
+    o.type = type || "sine";
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.55); o.frequency.exponentialRampToValueAtTime(f0 * 0.93, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(out); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(g).connect(out); o.start(t); o.stop(t + dur + 0.03);
   }
   var songs = [
-    function (out, t) { var base = rnd(3200, 4200), n = Math.floor(rnd(3, 7)); for (var i = 0; i < n; i++) chirp(out, t + i * rnd(0.08, 0.12), base * rnd(0.95, 1.05), base * rnd(1.15, 1.35), rnd(0.05, 0.08), 0.5); },
-    function (out, t) { var hi = rnd(3300, 3900); chirp(out, t, hi, hi * 1.04, 0.28, 0.4); chirp(out, t + 0.36, hi * 0.84, hi * 0.86, 0.32, 0.35); },
-    function (out, t) { var o = ctx.createOscillator(), m = ctx.createOscillator(), mg = ctx.createGain(), g = ctx.createGain(), f = rnd(3800, 4800), d = rnd(0.35, 0.6);
-      o.frequency.value = f; m.frequency.value = rnd(28, 40); mg.gain.value = f * 0.08; m.connect(mg).connect(o.frequency);
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    function (out, t) { var base = rnd(3200, 4300), n = Math.floor(rnd(3, 8)); for (var i = 0; i < n; i++) chirp(out, t + i * rnd(0.075, 0.12), base * rnd(0.95, 1.05), base * rnd(1.15, 1.35), rnd(0.05, 0.08), 0.5); },
+    function (out, t) { var hi = rnd(3000, 3800); chirp(out, t, hi, hi * 1.04, 0.26, 0.42); chirp(out, t + 0.34, hi * 0.82, hi * 0.85, 0.3, 0.36); },
+    function (out, t) { var f = rnd(2300, 2900); for (var i = 0; i < 4; i++) chirp(out, t + i * 0.16, f * (1 + i * 0.07), f * (1.22 + i * 0.07), 0.1, 0.45); },
+    function (out, t) { var f = rnd(1800, 2400); chirp(out, t, f, f * 1.5, 0.18, 0.4); chirp(out, t + 0.22, f * 1.4, f * 0.9, 0.3, 0.35); chirp(out, t + 0.6, f * 1.1, f * 1.3, 0.14, 0.3); },
+    function (out, t) { var o = ctx.createOscillator(), m = ctx.createOscillator(), mg = ctx.createGain(), g = ctx.createGain(), f = rnd(3800, 4800), d = rnd(0.35, 0.7);
+      o.frequency.value = f; m.frequency.value = rnd(26, 38); mg.gain.value = f * 0.07; m.connect(mg).connect(o.frequency);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.28, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
       o.connect(g).connect(out); o.start(t); m.start(t); o.stop(t + d + 0.05); m.stop(t + d + 0.05); },
-    function (out, t) { var f = rnd(2400, 3000); for (var i = 0; i < 3; i++) chirp(out, t + i * 0.18, f * (1 + i * 0.08), f * (1.25 + i * 0.08), 0.1, 0.45); }
+    function (out, t) { for (var i = 0; i < 2; i++) { var f = rnd(520, 640); chirp(out, t + i * 0.7, f, f * 0.96, 0.5, 0.5, "triangle"); } }   // a soft dove far off
   ];
   function birds() {
-    var t = ctx.currentTime + 0.05, out = voice(rnd(-0.85, 0.85), rnd(0.022, 0.05));
+    var t = ctx.currentTime + 0.05, out = voice(rnd(-0.9, 0.9), rnd(0.09, 0.17));
     pick(songs)(out, t);
-    if (Math.random() < 0.3) { var echo = voice(rnd(-0.9, 0.9), rnd(0.012, 0.028)); pick(songs)(echo, t + rnd(0.6, 1.4)); }
-    later(birds, rnd(1800, 6500));
+    if (chance(0.45)) pick(songs)(voice(rnd(-0.9, 0.9), rnd(0.05, 0.1)), t + rnd(0.5, 1.6));
+    later(birds, rnd(700, 3200));
   }
 
-  /* marimba: soft wooden notes on a D-major pentatonic, so any two notes sit well together */
-  var scale = [293.66, 329.63, 369.99, 440, 493.88, 587.33, 659.25];
-  function bar(t, f, vel) {
-    [[1, 1, 1.6], [3.93, 0.32, 0.28], [9.2, 0.06, 0.07]].forEach(function (p) {
-      var o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "sine"; o.frequency.value = f * p[0];
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vel * p[1], t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + p[2]);
-      o.connect(g).connect(marBus); o.start(t); o.stop(t + p[2] + 0.05);
+  /* ---- instruments ---- */
+  function env(g, t, peak, attack, decay) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay); }
+  function drum(t, f0, f1, decay, vol, pan) {
+    var o = ctx.createOscillator(), g = ctx.createGain(), p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+    if (p.pan) p.pan.value = pan || 0;
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + decay * 0.6);
+    env(g, t, vol, 0.004, decay); o.connect(g).connect(p).connect(buses.drums); o.start(t); o.stop(t + decay + 0.05);
+    var n = ctx.createBufferSource(), nf = ctx.createBiquadFilter(), ng = ctx.createGain();
+    n.buffer = whiteBuf; nf.type = "bandpass"; nf.frequency.value = f0 * 3; nf.Q.value = 1.2;
+    env(ng, t, vol * 0.25, 0.002, 0.04); n.connect(nf).connect(ng).connect(p); n.start(t, rnd(0, 1.5), 0.08);
+  }
+  function shaker(t, vol) {
+    var n = ctx.createBufferSource(), hp = ctx.createBiquadFilter(), g = ctx.createGain();
+    n.buffer = whiteBuf; hp.type = "highpass"; hp.frequency.value = 6000;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    n.connect(hp).connect(g).connect(buses.drums); n.start(t, rnd(0, 1.5), 0.1);
+  }
+  function mbila(t, f, vol, pan) {
+    var p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (p.pan) p.pan.value = pan || 0; p.connect(buses.mbila);
+    [[1, 1, 0.55, "triangle"], [3.0, 0.22, 0.12, "sine"], [6.2, 0.06, 0.05, "sine"]].forEach(function (h) {
+      var o = ctx.createOscillator(), g = ctx.createGain(); o.type = h[3]; o.frequency.value = f * h[0];
+      env(g, t, vol * h[1], 0.003, h[2]); o.connect(g).connect(p); o.start(t); o.stop(t + h[2] + 0.05);
+    });
+    // the buzz of the gourd resonator
+    var b = ctx.createOscillator(), bg = ctx.createGain(), bf = ctx.createBiquadFilter();
+    b.type = "sawtooth"; b.frequency.value = f; bf.type = "bandpass"; bf.frequency.value = f * 4; bf.Q.value = 6;
+    env(bg, t, vol * 0.05, 0.01, 0.25); b.connect(bf).connect(bg).connect(p); b.start(t); b.stop(t + 0.3);
+  }
+  function piano(t, f, vol) {
+    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.Q.value = 0.2;
+    lp.frequency.setValueAtTime(Math.min(4000, f * 9), t); lp.frequency.exponentialRampToValueAtTime(Math.max(300, f * 2.2), t + 2.5);
+    lp.connect(buses.piano);
+    [[1, 1, 5.5], [2.003, 0.5, 3.6], [3.008, 0.22, 2.4], [4.016, 0.12, 1.6], [5.03, 0.05, 1.0]].forEach(function (h) {
+      var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = f * h[0];
+      env(g, t, vol * h[1], 0.008, h[2]); o.connect(g).connect(lp); o.start(t); o.stop(t + h[2] + 0.1);
     });
   }
-  function marimba() {
-    var t = ctx.currentTime + 0.05, i = Math.floor(rnd(0, scale.length)), r = Math.random(), v = rnd(0.045, 0.07);
-    bar(t, scale[i], v);
-    if (r > 0.55) bar(t + rnd(0.32, 0.45), scale[Math.max(0, Math.min(scale.length - 1, i + pick([-2, -1, 1, 2])))], v * 0.8);
-    if (r > 0.88) bar(t + 0.9, scale[Math.max(0, i - 1)], v * 0.6);
-    later(marimba, rnd(7000, 15000));
+
+  /* ---- guitar: soft nylon strings, strummed gently ---- */
+  function pluck(t, f, vol, pan) {
+    var p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (p.pan) p.pan.value = pan;
+    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.setValueAtTime(Math.min(5000, f * 12), t); lp.frequency.exponentialRampToValueAtTime(Math.max(400, f * 3), t + 1.2);
+    lp.connect(p).connect(buses.guitar);
+    for (var k = 1; k <= 7; k++) {
+      var amp = Math.abs(Math.sin(Math.PI * k * 0.18)) / k; if (amp < 0.02) continue;
+      var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = f * k * (1 + 0.0008 * k * k);
+      env(g, t, vol * amp, 0.004, 2.6 / (1 + 0.45 * k)); o.connect(g).connect(lp); o.start(t); o.stop(t + 3);
+    }
+  }
+  var chords = [
+    [146.83, 220, 293.66, 369.99],            // D
+    [98, 146.83, 196, 246.94, 293.66],         // G
+    [110, 164.81, 220, 277.18, 329.63],        // A
+    [123.47, 185, 246.94, 293.66],             // Bm
+    [82.41, 123.47, 164.81, 196, 293.66]       // Em7
+  ];
+  var chordIdx = 0;
+  function strum(t, up, vol) {
+    var c = chords[chordIdx].slice(); if (up) c.reverse();
+    c.forEach(function (f, i) { pluck(t + i * rnd(0.022, 0.034), f, vol * (up ? 0.7 : 1) * rnd(0.85, 1), -0.25 + i * 0.12); });
+  }
+
+  /* ---- the signature: a distant voice saying "Quinta Arca", woven into the music ---- */
+  var sigBuf = null, nextSig = Infinity, farVerb = null;
+  function loadSignature() {
+    var tries = ["/assets/audio/quinta-arca-voice.m4a", "/assets/audio/quinta-arca-voice.mp3", "/assets/audio/_preview-voice.m4a"];
+    (function next() {
+      var u = tries.shift(); if (!u) return;
+      fetch(u).then(function (r) { if (!r.ok) throw 0; return r.arrayBuffer(); })
+        .then(function (a) { return new Promise(function (ok, no) { ctx.decodeAudioData(a, ok, no); }); })
+        .then(function (b) { sigBuf = b; nextSig = ctx.currentTime + rnd(20, 30); })
+        .catch(next);
+    })();
+  }
+  function signature(t) {
+    if (!farVerb) { farVerb = ctx.createConvolver(); farVerb.buffer = impulse(5.5); var fg = ctx.createGain(); fg.gain.value = 0.9; farVerb.connect(fg).connect(master); }
+    var src = ctx.createBufferSource(); src.buffer = sigBuf;
+    var hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 260;
+    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 4200;
+    var pan = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (pan.pan) pan.pan.value = rnd(-0.35, 0.35);
+    var dry = ctx.createGain(); dry.gain.value = 0.16;
+    var wet = ctx.createGain(); wet.gain.value = 0.55;
+    var dl = ctx.createDelay(2), fb = ctx.createGain(), dlp = ctx.createBiquadFilter(), dg = ctx.createGain();
+    dl.delayTime.value = STEP * 3; fb.gain.value = 0.38; dlp.type = "lowpass"; dlp.frequency.value = 2400; dg.gain.value = 0.5;
+    src.connect(hp).connect(lp).connect(pan);
+    pan.connect(dry).connect(master);
+    pan.connect(wet).connect(farVerb);
+    pan.connect(dl); dl.connect(dlp).connect(fb).connect(dl); dlp.connect(dg).connect(farVerb);
+    src.start(t);
+  }
+
+  /* ---- a shared slow pulse, so drums, mbila and piano always sit together ---- */
+  var STEP = 60 / 76 / 3;               // triplet eighths at 76 bpm, a relaxed 12/8 feel
+  var scaleLow = [73.42, 82.41, 92.5, 110, 123.47, 146.83, 164.81, 185, 220];       // D-major pentatonic, piano register
+  var scaleHigh = [587.33, 659.25, 739.99, 880, 987.77, 1174.66, 1318.51];          // mbila register
+  var step = 0, nextTime = 0, motif = [], pIdx = 4;
+  var guitarBars = 0, guitarWait = 4;
+  var drumsOn = false, drumBarsLeft = 0, mbilaPat = null, mbilaLeft = 0, mbilaWait = 6;
+
+  function onStep(n, t) {
+    var s = n % 12, bar = Math.floor(n / 12), age = (t - startedAt);
+    var swing = (s % 3 === 2) ? STEP * 0.08 : 0, tt = t + swing + rnd(-0.008, 0.008);
+
+    if (s === 0 && sigBuf && t >= nextSig) { signature(t); nextSig = t + rnd(150, 240); }
+    if (s === 0) {   // decide each bar: do the drums play, does the mbila come in?
+      if (drumBarsLeft <= 0) { drumsOn = !drumsOn && age > 20 ? chance(0.6) : false; drumBarsLeft = drumsOn ? Math.floor(rnd(4, 9)) : Math.floor(rnd(3, 7)); }
+      drumBarsLeft--;
+      if (guitarBars > 0) guitarBars--;
+      else if (--guitarWait <= 0 && age > 8) { guitarBars = Math.floor(rnd(2, 5)); guitarWait = Math.floor(rnd(5, 10)); chordIdx = Math.floor(rnd(0, chords.length)); }
+      if (guitarBars > 0 && chance(0.35)) chordIdx = pick([0, 1, 2, 3, 4]);
+      if (mbilaLeft > 0) mbilaLeft--;
+      else if (--mbilaWait <= 0 && age > 12) { mbilaPat = []; var root = Math.floor(rnd(0, 4)); for (var i = 0; i < 6; i++) mbilaPat.push(chance(0.75) ? scaleHigh[root + Math.floor(rnd(0, 3))] : 0); mbilaLeft = Math.floor(rnd(2, 4)); mbilaWait = Math.floor(rnd(8, 16)); }
+    }
+
+    if (drumsOn) {   // soft batuque: low drum, mid drum, an open slap and the shaker
+      var fade = drumBarsLeft === 0 ? 0.6 : 1;
+      if (s === 0 && chance(0.95)) drum(tt, 115, 68, 0.45, 0.12 * fade, -0.15);
+      if (s === 7 && chance(0.7)) drum(tt, 110, 66, 0.4, 0.09 * fade, -0.15);
+      if ((s === 3 || s === 9) && chance(0.55)) drum(tt, 210, 160, 0.22, 0.06 * fade, 0.25);
+      if ((s === 6 || s === 10) && chance(0.35)) drum(tt, 330, 260, 0.12, 0.04 * fade, 0.3);
+      if (chance(s % 3 === 0 ? 0.8 : 0.45)) shaker(tt, (s % 3 === 0 ? 0.018 : 0.009) * fade);
+    }
+
+    if (mbilaLeft > 0 && mbilaPat && s < 12) {   // short interlocking mbila figure on the half-beats
+      var note = mbilaPat[s % 6];
+      if (note && (s % 2 === 1 || chance(0.3))) mbila(tt, note, rnd(0.08, 0.11), rnd(-0.4, 0.4));
+    }
+
+    if (guitarBars > 0) {   // a few unhurried strums: down on the first beat, sometimes a light up-strum
+      if (s === 0 && chance(0.9)) strum(tt, false, rnd(0.05, 0.07));
+      else if (s === 8 && chance(0.4)) strum(tt, true, rnd(0.035, 0.05));
+      else if (s === 6 && chance(0.25)) strum(tt, false, rnd(0.03, 0.045));
+    }
+
+    // the piano composes from nothing: very sparse at first, then small motifs it remembers and varies
+    var density = Math.min(0.2, 0.025 + age / 600);
+    var strong = (s % 3 === 0) ? 1 : 0.35;
+    if (chance(density * strong)) {
+      var f;
+      if (motif.length > 2 && chance(0.45)) f = motif[Math.floor(rnd(0, motif.length))];
+      else { pIdx = Math.max(0, Math.min(scaleLow.length - 1, pIdx + pick([-2, -1, -1, 1, 1, 2, 0]))); f = scaleLow[pIdx]; motif.push(f); if (motif.length > 5) motif.shift(); }
+      piano(tt, f, rnd(0.035, 0.06) * (s === 0 ? 1.15 : 1));
+    }
+  }
+  function scheduler() {
+    while (nextTime < ctx.currentTime + 0.25) { onStep(step, nextTime); step++; nextTime += STEP; }
   }
 
   function paint() {
@@ -740,17 +856,25 @@
     if (!ctx) build();
     on = true; paint();
     ctx.resume().then(function () {
-      var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0.75, t + 3);
+      var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0.7, t + 3);
+      if (!clock) { startedAt = t; nextTime = t + 0.3; step = 0; clock = setInterval(scheduler, 90); }
     });
-    if (!timers.length) { later(birds, 900); later(marimba, 4000); }
+    if (!timers.length) later(birds, 600);
   }
   function stop() {
     on = false; paint(); timers.forEach(clearTimeout); timers = [];
+    if (clock) { clearInterval(clock); clock = null; }
     if (!ctx) return;
-    var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0, t + 0.8);
-    setTimeout(function () { if (!on && ctx) ctx.suspend(); }, 900);
+    var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0, t + 0.6);
+    setTimeout(function () { if (!on && ctx) ctx.suspend(); }, 700);
   }
-  btns.forEach(function (b) { b.addEventListener("click", function (e) { e.preventDefault(); if (on) { stop(); pref("off"); } else { start(); pref("on"); } }); });
+  function waiting() { return btns.some(function (b) { return b.classList.contains("is-waiting"); }); }
+  btns.forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (on || waiting()) { stop(); pref("off"); } else { start(); pref("on"); }
+    });
+  });
 
   // keep playing while browsing: resume on the first tap or key press of each new page
   if (pref() === "on") {
@@ -758,7 +882,6 @@
     var go = function (e) {
       if (e && e.target && e.target.closest && e.target.closest("[data-sound-toggle]")) return;
       ["pointerdown", "keydown", "touchstart"].forEach(function (n) { window.removeEventListener(n, go, true); });
-      btns.forEach(function (b) { b.classList.remove("is-waiting"); });
       if (pref() === "on" && !on) start();
     };
     ["pointerdown", "keydown", "touchstart"].forEach(function (n) { window.addEventListener(n, go, true); });
