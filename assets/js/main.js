@@ -234,6 +234,7 @@
       if (via === "whatsapp") {
         var lines = [T.hello, ""];
         Object.keys(data.nice).forEach(function (k) { lines.push(k + ": " + data.nice[k]); });
+        document.dispatchEvent(new CustomEvent("qa:lead", { detail: { method: "whatsapp", type: data.raw.type || "", room: data.raw.room || "" } }));
         window.open("https://wa.me/" + WHATSAPP + "?text=" + encodeURIComponent(lines.join("\n")), "_blank", "noopener");
         return;
       }
@@ -250,6 +251,7 @@
         .then(function (res) {
           if (!res.ok || (res.j && String(res.j.success) === "false")) throw new Error("send failed");
           form.classList.add("sent"); ok.hidden = false;
+          document.dispatchEvent(new CustomEvent("qa:lead", { detail: { method: "form", type: data.raw.type || "", room: data.raw.room || "" } }));
           ok.querySelectorAll(".botanical.draw").forEach(function (b) { b.classList.add("drawn"); });
           ok.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
         })
@@ -548,4 +550,73 @@
       btn.replaceWith(frame);
     });
   });
+})();
+
+
+/* ---------- Analytics: Google Analytics 4, loaded only after the visitor accepts ---------- */
+(function () {
+  var GA = document.documentElement.getAttribute("data-ga") || "";
+  var box = document.querySelector("[data-consent]");
+  var KEY = "qa-consent";
+  function get() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+  function put(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
+  var loaded = false;
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { window.dataLayer.push(arguments); }
+  window.qaTrack = function (name, params) { if (loaded) gtag("event", name, params || {}); };
+
+  function load() {
+    if (loaded || !GA) return;
+    loaded = true;
+    gtag("js", new Date());
+    gtag("config", GA, { anonymize_ip: true, page_language: document.documentElement.lang });
+    var s = document.createElement("script");
+    s.async = true; s.src = "https://www.googletagmanager.com/gtag/js?id=" + encodeURIComponent(GA);
+    document.head.appendChild(s);
+  }
+  function clearCookies() {
+    document.cookie.split(";").forEach(function (c) {
+      var n = c.split("=")[0].trim();
+      if (/^_ga/.test(n)) {
+        ["", "; domain=.quintarca.com", "; domain=" + location.hostname].forEach(function (d) {
+          document.cookie = n + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/" + d;
+        });
+      }
+    });
+  }
+  function show() { if (box) box.hidden = false; }
+  function hide() { if (box) box.hidden = true; }
+
+  if (GA) {
+    var c = get();
+    if (c === "yes") load(); else if (c !== "no") show();
+  }
+  if (box) {
+    box.querySelector("[data-consent-yes]").addEventListener("click", function () { put("yes"); hide(); load(); });
+    box.querySelector("[data-consent-no]").addEventListener("click", function () {
+      var was = get() === "yes"; put("no"); hide(); clearCookies(); if (was) location.reload();
+    });
+  }
+  document.querySelectorAll("[data-consent-open]").forEach(function (b) {
+    if (!GA) { b.hidden = true; return; }
+    b.addEventListener("click", show);
+  });
+
+  /* key actions */
+  document.addEventListener("qa:lead", function (e) {
+    var d = e.detail || {};
+    window.qaTrack("generate_lead", { method: d.method, enquiry_type: d.type, room: d.room });
+  });
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a, button");
+    if (!a) return;
+    var h = a.getAttribute("href") || "";
+    var where = a.closest("header") ? "header" : a.closest("footer") ? "footer" : a.classList.contains("wa-float") ? "floating_button" : "page";
+    if (/wa\.me/.test(h)) window.qaTrack("whatsapp_click", { location: where });
+    else if (/^tel:/.test(h)) window.qaTrack("phone_click", { location: where });
+    else if (/^mailto:/.test(h)) window.qaTrack("email_click", { location: where });
+    else if (/instagram\.com/.test(h)) window.qaTrack("instagram_click", { location: where });
+    else if (a.hasAttribute("data-booking-open")) window.qaTrack("booking_open", { location: where });
+    else if (/\/(rooms|pt\/alojamento)\/[^/]+\/$/.test(h)) window.qaTrack("room_view_click", { room: h.split("/").filter(Boolean).pop() });
+  }, true);
 })();
