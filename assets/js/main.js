@@ -620,3 +620,151 @@
     else if (/\/(rooms|pt\/alojamento)\/[^/]+\/$/.test(h)) window.qaTrack("room_view_click", { room: h.split("/").filter(Boolean).pop() });
   }, true);
 })();
+
+/* ---------- Sounds of the quinta: water, birds and a little marimba, made live in the browser ---------- */
+(function () {
+  var btns = [].slice.call(document.querySelectorAll("[data-sound-toggle]"));
+  if (!btns.length) return;
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { btns.forEach(function (b) { b.hidden = true; }); return; }
+  var KEY = "qa-sound";
+  var ctx = null, master, verbIn, birdBus, marBus, nodes = [], timers = [], on = false;
+  function pref(v) { try { if (v === undefined) return localStorage.getItem(KEY); localStorage.setItem(KEY, v); } catch (e) { return null; } }
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function later(fn, ms) { var id = setTimeout(function () { timers = timers.filter(function (x) { return x !== id; }); if (on) fn(); }, ms); timers.push(id); }
+
+  function noiseBuffer(sec, kind) {
+    var len = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (var ch = 0; ch < 2; ch++) {
+      var d = buf.getChannelData(ch), b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
+      for (var i = 0; i < len; i++) {
+        var w = Math.random() * 2 - 1;
+        if (kind === "brown") { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+        else { b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+          b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+          d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926; }
+      }
+      // soften the loop seam
+      var f = Math.floor(ctx.sampleRate * 0.05);
+      for (var j = 0; j < f; j++) { var g = j / f; d[j] *= g; d[len - 1 - j] *= g; }
+    }
+    return buf;
+  }
+  function impulse(sec) {
+    var len = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (var ch = 0; ch < 2; ch++) { var d = buf.getChannelData(ch); for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+    return buf;
+  }
+  function loopNoise(kind, sec) { var s = ctx.createBufferSource(); s.buffer = noiseBuffer(sec, kind); s.loop = true; s.start(); nodes.push(s); return s; }
+  function lfo(freq, depth, target) { var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = freq; g.gain.value = depth; o.connect(g).connect(target); o.start(); nodes.push(o); }
+
+  function build() {
+    ctx = new AC();
+    master = ctx.createGain(); master.gain.value = 0;
+    var comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3;
+    master.connect(comp).connect(ctx.destination);
+    var verb = ctx.createConvolver(); verb.buffer = impulse(3.2);
+    verbIn = ctx.createGain(); verbIn.gain.value = 0.5; verbIn.connect(verb).connect(master);
+
+    // the waterfall: a soft low body, the bright "shhh" of falling water and a faint spray, slowly breathing
+    var deep = ctx.createBiquadFilter(); deep.type = "lowpass"; deep.frequency.value = 300;
+    var deepG = ctx.createGain(); deepG.gain.value = 0.09;
+    loopNoise("brown", 7).connect(deep).connect(deepG).connect(master);
+    var mid = ctx.createBiquadFilter(); mid.type = "bandpass"; mid.frequency.value = 1100; mid.Q.value = 0.35;
+    var midG = ctx.createGain(); midG.gain.value = 0.11;
+    loopNoise("pink", 9).connect(mid).connect(midG).connect(master);
+    lfo(0.05, 300, mid.frequency); lfo(0.031, 0.025, midG.gain);
+    var fall = ctx.createBiquadFilter(); fall.type = "highpass"; fall.frequency.value = 1600;
+    var fallLp = ctx.createBiquadFilter(); fallLp.type = "lowpass"; fallLp.frequency.value = 6500;
+    var fallG = ctx.createGain(); fallG.gain.value = 0.05;
+    loopNoise("pink", 6).connect(fall).connect(fallLp).connect(fallG).connect(master);
+    lfo(0.043, 0.012, fallG.gain);
+    var spray = ctx.createBiquadFilter(); spray.type = "highpass"; spray.frequency.value = 5000;
+    var sprayG = ctx.createGain(); sprayG.gain.value = 0.012;
+    loopNoise("pink", 5).connect(spray).connect(sprayG).connect(master);
+
+    birdBus = ctx.createGain(); birdBus.gain.value = 1; birdBus.connect(master);
+    var bSend = ctx.createGain(); bSend.gain.value = 0.35; birdBus.connect(bSend).connect(verbIn);
+    marBus = ctx.createGain(); marBus.gain.value = 1; marBus.connect(master);
+    var mSend = ctx.createGain(); mSend.gain.value = 0.9; marBus.connect(mSend).connect(verbIn);
+  }
+
+  /* birds */
+  function voice(pan, vol) { var p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(); if (p.pan) p.pan.value = pan; var g = ctx.createGain(); g.gain.value = vol; p.connect(g).connect(birdBus); return p; }
+  function chirp(out, t, f0, f1, dur, peak) {
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.55); o.frequency.exponentialRampToValueAtTime(f0 * 0.92, t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(out); o.start(t); o.stop(t + dur + 0.02);
+  }
+  var songs = [
+    function (out, t) { var base = rnd(3200, 4200), n = Math.floor(rnd(3, 7)); for (var i = 0; i < n; i++) chirp(out, t + i * rnd(0.08, 0.12), base * rnd(0.95, 1.05), base * rnd(1.15, 1.35), rnd(0.05, 0.08), 0.5); },
+    function (out, t) { var hi = rnd(3300, 3900); chirp(out, t, hi, hi * 1.04, 0.28, 0.4); chirp(out, t + 0.36, hi * 0.84, hi * 0.86, 0.32, 0.35); },
+    function (out, t) { var o = ctx.createOscillator(), m = ctx.createOscillator(), mg = ctx.createGain(), g = ctx.createGain(), f = rnd(3800, 4800), d = rnd(0.35, 0.6);
+      o.frequency.value = f; m.frequency.value = rnd(28, 40); mg.gain.value = f * 0.08; m.connect(mg).connect(o.frequency);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(out); o.start(t); m.start(t); o.stop(t + d + 0.05); m.stop(t + d + 0.05); },
+    function (out, t) { var f = rnd(2400, 3000); for (var i = 0; i < 3; i++) chirp(out, t + i * 0.18, f * (1 + i * 0.08), f * (1.25 + i * 0.08), 0.1, 0.45); }
+  ];
+  function birds() {
+    var t = ctx.currentTime + 0.05, out = voice(rnd(-0.85, 0.85), rnd(0.022, 0.05));
+    pick(songs)(out, t);
+    if (Math.random() < 0.3) { var echo = voice(rnd(-0.9, 0.9), rnd(0.012, 0.028)); pick(songs)(echo, t + rnd(0.6, 1.4)); }
+    later(birds, rnd(1800, 6500));
+  }
+
+  /* marimba: soft wooden notes on a D-major pentatonic, so any two notes sit well together */
+  var scale = [293.66, 329.63, 369.99, 440, 493.88, 587.33, 659.25];
+  function bar(t, f, vel) {
+    [[1, 1, 1.6], [3.93, 0.32, 0.28], [9.2, 0.06, 0.07]].forEach(function (p) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = f * p[0];
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vel * p[1], t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + p[2]);
+      o.connect(g).connect(marBus); o.start(t); o.stop(t + p[2] + 0.05);
+    });
+  }
+  function marimba() {
+    var t = ctx.currentTime + 0.05, i = Math.floor(rnd(0, scale.length)), r = Math.random(), v = rnd(0.045, 0.07);
+    bar(t, scale[i], v);
+    if (r > 0.55) bar(t + rnd(0.32, 0.45), scale[Math.max(0, Math.min(scale.length - 1, i + pick([-2, -1, 1, 2])))], v * 0.8);
+    if (r > 0.88) bar(t + 0.9, scale[Math.max(0, i - 1)], v * 0.6);
+    later(marimba, rnd(7000, 15000));
+  }
+
+  function paint() {
+    btns.forEach(function (b) { b.classList.remove("is-waiting"); b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+  }
+  function start() {
+    if (!ctx) build();
+    on = true; paint();
+    ctx.resume().then(function () {
+      var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0.75, t + 3);
+    });
+    if (!timers.length) { later(birds, 900); later(marimba, 4000); }
+  }
+  function stop() {
+    on = false; paint(); timers.forEach(clearTimeout); timers = [];
+    if (!ctx) return;
+    var t = ctx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0, t + 0.8);
+    setTimeout(function () { if (!on && ctx) ctx.suspend(); }, 900);
+  }
+  btns.forEach(function (b) { b.addEventListener("click", function (e) { e.preventDefault(); if (on) { stop(); pref("off"); } else { start(); pref("on"); } }); });
+
+  // keep playing while browsing: resume on the first tap or key press of each new page
+  if (pref() === "on") {
+    btns.forEach(function (b) { b.classList.add("is-waiting"); });
+    var go = function (e) {
+      if (e && e.target && e.target.closest && e.target.closest("[data-sound-toggle]")) return;
+      ["pointerdown", "keydown", "touchstart"].forEach(function (n) { window.removeEventListener(n, go, true); });
+      btns.forEach(function (b) { b.classList.remove("is-waiting"); });
+      if (pref() === "on" && !on) start();
+    };
+    ["pointerdown", "keydown", "touchstart"].forEach(function (n) { window.addEventListener(n, go, true); });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!ctx) return;
+    if (document.hidden) ctx.suspend(); else if (on) ctx.resume();
+  });
+})();
