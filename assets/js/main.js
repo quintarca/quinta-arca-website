@@ -766,7 +766,7 @@
   /* ---- the signature: a distant voice saying "Quinta Arca", woven into the music ---- */
   var sigBuf = null, nextSig = Infinity, farVerb = null;
   function loadSignature() {
-    var tries = ["/assets/audio/quinta-arca-voice.m4a", "/assets/audio/quinta-arca-voice.mp3", "/assets/audio/_preview-voice.m4a"];
+    var tries = ["/assets/audio/quinta-arca-voice.m4a", "/assets/audio/quinta-arca-voice.mp3"];
     (function next() {
       var u = tries.shift(); if (!u) return;
       fetch(u).then(function (r) { if (!r.ok) throw 0; return r.arrayBuffer(); })
